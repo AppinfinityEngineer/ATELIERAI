@@ -249,6 +249,10 @@ function pickMix(e){
   document.body.classList.add('mix-open');
 }
 $('#mixclose').onclick=()=>document.body.classList.remove('mix-open');
+$('#mixtoggle').onclick=()=>{
+  document.body.classList.toggle('mix-open');
+  if(!S.lastMix){ setStatus('Mixer opened — click anywhere on the image to generate a paint recipe'); }
+};
 
 function renderMixPanel(){
   const box=$('#mixbody'); box.innerHTML='';

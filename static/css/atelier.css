@@ -12,8 +12,11 @@ html,body{height:100%}
 body{
   background:var(--ground); color:var(--ink); font:14px/1.5 var(--body);
   display:grid; height:100vh; overflow:hidden;
-  grid-template-columns:196px 1fr 288px; grid-template-rows:56px 1fr 30px;
+  grid-template-columns:196px minmax(0,1fr) 288px; grid-template-rows:56px 1fr 30px;
   grid-template-areas:"top top top" "rail view insp" "status status status";
+}
+body.mix-open{grid-template-columns:196px minmax(0,1fr) 288px 360px;
+  grid-template-areas:"top top top top" "rail view insp mix" "status status status status";
 }
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
@@ -102,11 +105,12 @@ input[type=range]{flex:1;accent-color:var(--gold);height:3px}
 .family-meta span{font:11px var(--mono);color:var(--muted)}
 
 /* mix panel */
-#mixpanel{position:fixed;top:56px;right:288px;bottom:30px;width:308px;z-index:20;
+#mixpanel{grid-area:mix;display:none;min-width:0;height:100%;z-index:3;
   background:var(--raised);border-left:1px solid var(--line);padding:16px;overflow-y:auto;
-  transform:translateX(110%);transition:transform .25s cubic-bezier(.2,.8,.2,1);
-  box-shadow:-18px 0 50px rgba(0,0,0,.45)}
-body.mix-open #mixpanel{transform:none}
+  box-shadow:none}
+body.mix-open #mixpanel{display:block}
+body.mix-open #viewport{min-width:0}
+body.mix-open #mixtoggle{color:#1c1608;background:var(--gold);border-color:var(--gold);font-weight:600}
 #mixclose{font-size:18px;color:var(--muted)}
 .hint{color:var(--muted);font-size:13px}
 .swatch{display:inline-block;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(237,228,211,.15)}
@@ -131,6 +135,23 @@ body.mix-open #mixpanel{transform:none}
 #statusbar{grid-area:status;display:flex;align-items:center;padding:0 16px;
   background:var(--panel);border-top:1px solid var(--line);
   font:11px var(--mono);color:var(--muted)}
+
+
+@media (max-width:1200px){
+  body.mix-open{grid-template-columns:196px minmax(0,1fr) 288px;
+    grid-template-areas:"top top top" "rail view insp" "status status status"}
+  body.mix-open #mixpanel{display:block;position:fixed;top:56px;right:0;bottom:30px;width:min(360px,92vw);
+    z-index:30;box-shadow:-18px 0 50px rgba(0,0,0,.45)}
+}
+@media (max-width:760px){
+  body{grid-template-columns:1fr;grid-template-rows:56px 1fr 220px 30px;
+    grid-template-areas:"top" "view" "insp" "status"}
+  #rail{display:none}
+  #inspector{border-left:0;border-top:1px solid var(--line)}
+  .top-actions{gap:5px}
+  .btn{padding:7px 9px;font-size:12px}
+  body.mix-open #mixpanel{left:0;right:0;top:auto;bottom:30px;width:auto;max-height:48vh;border-left:0;border-top:1px solid var(--line)}
+}
 
 @media (max-width:980px){
   body{grid-template-columns:64px 1fr 240px}
