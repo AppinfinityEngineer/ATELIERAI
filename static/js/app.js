@@ -2,6 +2,7 @@
 import { PIGMENTS, LIMITED_PALETTES, findRecipes, rgbToLab } from './pigments.js';
 import * as IM from './imaging.js';
 import { MASTER_PROFILES, applyMasterFinish, masterNotes } from './master_profiles.js';
+import { paintPlaneAbstraction, paintPlaneMap, paintPlaneNotes } from './paint_planes.js';
 
 // ---------------- state ----------------
 const S = {
@@ -12,7 +13,7 @@ const S = {
   paletteKey: 'academic',
   owned: new Set(LIMITED_PALETTES.academic.ids),
   valueSteps: 8, softness: 0.08,
-  colourK: 12, saturation: 1, tempBias: 0, painterliness: 0.35,
+  colourK: 12, saturation: 1, tempBias: 0, painterliness: 0.35, planeStrength: 0.72, impastoDepth: 0.76, wetShine: 0.70, strokePlan: 0.68, colourAccent: 0.28, paintSnap: 0.62, impastoDepth: 0.76, wetShine: 0.70, strokePlan: 0.68, colourAccent: 0.28,
   drawingMode: 'construction',
   overlay: 'none',       // grid | thirds | golden | none
   gridN: 4,
@@ -47,8 +48,10 @@ const MODULES = [
   { id:'value',     label:'Value Study',     group:'Values' },
   { id:'notan',     label:'Notan',           group:'Values' },
   { id:'light',     label:'Light Map',       group:'Values' },
+  { id:'planes',    label:'Paint Planes',    group:'Values' },
   { id:'temp',      label:'Temperature Map', group:'Colour' },
   { id:'sat',       label:'Saturation Map',  group:'Colour' },
+  { id:'colourstudy',label:'Colour Study',    group:'Colour' },
   { id:'palette',   label:'Virtual Palette', group:'Colour' },
   { id:'edges',     label:'Edge Hierarchy',  group:'Structure' },
   { id:'drawing',   label:'Drawing Guide',   group:'Structure' },
@@ -71,8 +74,12 @@ showEmptyState(true);
 function showEmptyState(on){ $('#empty').style.display = on?'grid':'none'; $('#stagewrap').style.visibility = on?'hidden':'visible'; }
 
 // ---------------- image load ----------------
-$('#file').addEventListener('change', e=>{ const f=e.target.files[0]; if(f) loadFile(f); });
-$('#empty').addEventListener('click', ()=>$('#file').click());
+$('#file').addEventListener('change', e=>{ const f=e.target.files[0]; if(f) loadFile(f); e.target.value=''; });
+function openPhotoPicker(){ const input=$('#file'); if(input){ input.value=''; input.click(); } }
+$('#empty').addEventListener('click', openPhotoPicker);
+$('#empty').addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openPhotoPicker(); } });
+const emptyBtn=document.querySelector('#empty .btn');
+if(emptyBtn){ emptyBtn.addEventListener('click', e=>{ e.preventDefault(); e.stopPropagation(); openPhotoPicker(); }); }
 ['dragover','drop'].forEach(ev=>document.addEventListener(ev,e=>e.preventDefault()));
 document.addEventListener('drop', e=>{ const f=e.dataTransfer?.files?.[0]; if(f&&f.type.startsWith('image/')) loadFile(f); });
 
@@ -107,14 +114,255 @@ function colourOpts(){
            valueSteps:m.vs, painterliness:S.painterliness*(0.4+m.paint) , tint:m.tint };
 }
 
+
+
+function clamp255(v){ return Math.max(0,Math.min(255,Math.round(v))); }
+function satAdjust(rgb, amt){
+  const l=0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2];
+  return rgb.map(v=>clamp255(l+(v-l)*amt));
+}
+function lumAt(data,w,h,x,y){
+  x=Math.max(0,Math.min(w-1,x|0)); y=Math.max(0,Math.min(h-1,y|0));
+  const i=(y*w+x)*4; return .2126*data[i]+.7152*data[i+1]+.0722*data[i+2];
+}
+function rgbAt(data,w,h,x,y){
+  x=Math.max(0,Math.min(w-1,x|0)); y=Math.max(0,Math.min(h-1,y|0));
+  const i=(y*w+x)*4; return [data[i],data[i+1],data[i+2]];
+}
+function seededRandom(seed){
+  let s=seed>>>0;
+  return ()=>{ s=(1664525*s+1013904223)>>>0; return s/4294967296; };
+}
+function rgba(rgb,a){ return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`; }
+function lineStroke(ctx,x,y,ang,len,width,color,alpha){
+  const dx=Math.cos(ang)*len/2, dy=Math.sin(ang)*len/2;
+  ctx.strokeStyle=rgba(color,alpha); ctx.lineWidth=width; ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath(); ctx.moveTo(x-dx,y-dy); ctx.lineTo(x+dx,y+dy); ctx.stroke();
+}
+
+// Paints broad, copyable oil strokes on top of the simplified colour planes.
+// The goal is not random texture. The goal is a canvas reference that tells the
+// artist where the paint changes, which direction it moves, and where accents go.
+function applyPainterlyStrokePlan(img, profile, strength=.65, accent=.25){
+  if(!img || !strength) return img;
+  const w=img.width, h=img.height, data=img.data;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const cx=c.getContext('2d', { willReadFrequently:true });
+
+  // Creamy wet-oil base: slightly softened, not noisy canvas grain.
+  cx.putImageData(img,0,0);
+  cx.save();
+  const blur=0.35 + strength*1.0;
+  cx.filter=`blur(${blur}px) contrast(${1.03+strength*.08}) saturate(${1.00+accent*.22})`;
+  cx.globalAlpha=.44 + strength*.22;
+  cx.drawImage(c,0,0);
+  cx.restore();
+
+  const r=seededRandom((w*73856093) ^ (h*19349663) ^ ((S.mode||'x').length*83492791));
+  const short=Math.min(w,h), area=w*h;
+  const master=(S.mode||'').toLowerCase();
+  const isLoose=['sargent','sorolla','allaprima','velazquez','zorn'].includes(master);
+  const isSmooth=['bouguereau','academic','renaissance','atelier'].includes(master);
+  const isDark=['rembrandt','caravaggio','baroque','dutch'].includes(master);
+  const count=Math.floor((isSmooth?460:760) + area/4200*strength);
+  const baseLen=short*(isLoose?.035:.024);
+  const baseWidth=Math.max(1.2, short*(isLoose?.0048:.0032));
+
+  // broad construction strokes: fewer, deliberate, readable.
+  for(let n=0;n<count;n++){
+    const x=r()*w, y=r()*h;
+    const L=lumAt(data,w,h,x,y);
+    const left=lumAt(data,w,h,x-6,y), right=lumAt(data,w,h,x+6,y), up=lumAt(data,w,h,x,y-6), down=lumAt(data,w,h,x,y+6);
+    const gx=right-left, gy=down-up;
+    let ang=Math.atan2(gy,gx)+Math.PI/2;
+    // Portrait-friendly vertical/hair flow bias in upper centre.
+    const cxn=Math.abs(x/w-.5), cyn=y/h;
+    if(cyn<.72 && cxn<.30 && r()<.42) ang+=(Math.PI/2-ang)*.42;
+    // Background gets longer quieter masses, face gets shorter planes.
+    const focal=(cxn<.23 && cyn>.18 && cyn<.68);
+    const len=baseLen*(focal?.55:1.35)*(0.55+r()*1.35);
+    const width=baseWidth*(focal?.65:1.25)*(0.75+r()*1.8);
+    let col=rgbAt(data,w,h,x,y);
+    if(isDark && L<80) col=satAdjust([col[0]+12,col[1]+4,col[2]], .78);
+    if(isLoose && L>110) col=satAdjust(col, 1.18+accent*.55);
+    if(isSmooth) col=satAdjust(col, .92);
+    const alpha=(focal?.12:.18) + strength*(focal?.10:.20);
+    lineStroke(cx,x,y,ang,len,width,col,alpha);
+  }
+
+  // accent strokes: like real painting notes, not full-image noise.
+  const accentCount=Math.floor((isLoose?120:55)*accent + 18*strength);
+  for(let n=0;n<accentCount;n++){
+    const x=(.18+r()*.64)*w, y=(.12+r()*.70)*h;
+    const L=lumAt(data,w,h,x,y);
+    let col=rgbAt(data,w,h,x,y);
+    const warm=r()<.5;
+    if(L>115){ col=warm?[clamp255(col[0]+38),clamp255(col[1]+18),clamp255(col[2]-8)]:[clamp255(col[0]-10),clamp255(col[1]+18),clamp255(col[2]+34)]; }
+    else { col=warm?[clamp255(col[0]+24),clamp255(col[1]+6),clamp255(col[2]-10)]:[clamp255(col[0]-14),clamp255(col[1]+10),clamp255(col[2]+24)]; }
+    const len=short*(.012+r()*.035)*(isLoose?1.25:.65);
+    const width=Math.max(1.5, short*(.0025+r()*.0045));
+    const ang=(r()*Math.PI*2);
+    lineStroke(cx,x,y,ang,len,width,col,.18+accent*.34);
+  }
+
+  // impasto highlights: small thick strokes only in high-value planes.
+  const hiCount=Math.floor(70*strength);
+  for(let n=0;n<hiCount;n++){
+    const x=r()*w, y=r()*h; const L=lumAt(data,w,h,x,y);
+    if(L<150) continue;
+    let col=rgbAt(data,w,h,x,y); col=[clamp255(col[0]+28),clamp255(col[1]+24),clamp255(col[2]+16)];
+    lineStroke(cx,x,y,(r()*Math.PI)-Math.PI/2,short*(.006+r()*.018),Math.max(1.2,short*.0028),col,.16+strength*.20);
+  }
+
+  return cx.getImageData(0,0,w,h);
+}
+
+
+
+// ---------------- wet impasto oil surface engine ----------------
+function aiClamp255(v){ return Math.max(0,Math.min(255,Math.round(v))); }
+function aiRgbAt(data,w,h,x,y){
+  x=Math.max(0,Math.min(w-1,x|0)); y=Math.max(0,Math.min(h-1,y|0));
+  const i=(y*w+x)*4; return [data[i],data[i+1],data[i+2]];
+}
+function aiLum(rgb){ return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2]; }
+function aiLumAt(data,w,h,x,y){ return aiLum(aiRgbAt(data,w,h,x,y)); }
+function aiRgba(rgb,a){ return `rgba(${aiClamp255(rgb[0])},${aiClamp255(rgb[1])},${aiClamp255(rgb[2])},${a})`; }
+function aiMix(a,b,t){ return [aiClamp255(a[0]*(1-t)+b[0]*t),aiClamp255(a[1]*(1-t)+b[1]*t),aiClamp255(a[2]*(1-t)+b[2]*t)]; }
+function aiSat(rgb,amt){ const l=aiLum(rgb); return rgb.map(v=>aiClamp255(l+(v-l)*amt)); }
+function aiRand(seed){ let s=seed>>>0; return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
+function aiStroke(ctx,x,y,ang,len,wid,rgb,alpha,cap='round'){
+  const dx=Math.cos(ang)*len/2, dy=Math.sin(ang)*len/2;
+  ctx.lineWidth=wid; ctx.lineCap=cap; ctx.lineJoin='round'; ctx.strokeStyle=aiRgba(rgb,alpha);
+  ctx.beginPath(); ctx.moveTo(x-dx,y-dy); ctx.lineTo(x+dx,y+dy); ctx.stroke();
+}
+function aiPaletteKnife(ctx,x,y,ang,len,wid,rgb,alpha){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(ang);
+  const g=ctx.createLinearGradient(-len/2,0,len/2,0);
+  g.addColorStop(0, aiRgba(aiMix(rgb,[25,20,16],.28), alpha*.72));
+  g.addColorStop(.48, aiRgba(rgb, alpha));
+  g.addColorStop(.74, aiRgba(aiMix(rgb,[255,246,220],.20), alpha*.88));
+  g.addColorStop(1, aiRgba(aiMix(rgb,[15,12,10],.22), alpha*.55));
+  ctx.fillStyle=g;
+  ctx.beginPath();
+  ctx.roundRect(-len/2,-wid/2,len,wid,Math.max(2,wid*.45));
+  ctx.fill();
+  ctx.restore();
+}
+
+function applyWetImpastoOilEngine(img, profile, depth=.72, shine=.65){
+  if(!img || depth<=0) return img;
+  const w=img.width, h=img.height, data=img.data;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const cx=c.getContext('2d', { willReadFrequently:true });
+  cx.putImageData(img,0,0);
+
+  const master=(S.mode||'').toLowerCase();
+  const darkMaster=['rembrandt','caravaggio','baroque','dutch'].includes(master);
+  const looseMaster=['sargent','sorolla','allaprima','velazquez','zorn'].includes(master);
+  const smoothMaster=['bouguereau','academic','renaissance','atelier'].includes(master);
+  const short=Math.min(w,h);
+  const rnd=aiRand((w*2654435761) ^ (h*2246822519) ^ ((master.length+7)*374761393));
+
+  // 1. Creamy wet base: remove dry digital speckle but keep broad forms.
+  cx.save();
+  cx.filter=`blur(${0.55+depth*0.95}px) saturate(${1.03+depth*.08}) contrast(${1.04+depth*.10})`;
+  cx.globalAlpha=.34 + depth*.24;
+  cx.drawImage(c,0,0);
+  cx.restore();
+
+  // 2. Glazed darks for Old Master modes: shadows become wet transparent pools.
+  if(darkMaster){
+    cx.save(); cx.globalCompositeOperation='multiply';
+    for(let n=0;n<90+depth*90;n++){
+      const x=rnd()*w, y=rnd()*h, L=aiLumAt(data,w,h,x,y);
+      if(L>118 && rnd()<.72) continue;
+      const rgb=aiMix(aiRgbAt(data,w,h,x,y), [48,25,12], .55);
+      aiPaletteKnife(cx,x,y,rnd()*Math.PI,short*(.035+rnd()*.085),short*(.010+rnd()*.034),rgb,.035+depth*.070);
+    }
+    cx.restore();
+  }
+
+  // 3. Paint-body construction strokes. Large enough to copy on canvas.
+  const count=Math.floor((looseMaster?1050:780) * depth + (w*h/7800));
+  for(let n=0;n<count;n++){
+    const x=rnd()*w, y=rnd()*h;
+    const L=aiLumAt(data,w,h,x,y);
+    const lx=aiLumAt(data,w,h,x-7,y), rx=aiLumAt(data,w,h,x+7,y), uy=aiLumAt(data,w,h,x,y-7), dy=aiLumAt(data,w,h,x,y+7);
+    const edge=Math.min(90, Math.abs(rx-lx)+Math.abs(dy-uy));
+    let ang=Math.atan2(dy-uy,rx-lx)+Math.PI/2;
+    const face=(Math.abs(x/w-.5)<.24 && y/h>.18 && y/h<.70);
+    const hair=(Math.abs(x/w-.50)<.33 && y/h>.05 && y/h<.62 && L<118);
+    const bg=!face && !hair;
+    if(hair) ang = -Math.PI/2 + (rnd()-.5)*.55;
+    if(bg && rnd()<.42) ang += (rnd()-.5)*.8;
+    const len=short*(face?(.010+rnd()*.028):(hair?(.026+rnd()*.070):(.035+rnd()*.100)))*(looseMaster?1.18:.88);
+    const wid=short*(face?(.0028+rnd()*.006):(.0045+rnd()*.015))*(smoothMaster?.58:1.0);
+    let rgb=aiRgbAt(data,w,h,x,y);
+    // Pull colours toward paint, not grey screen tone.
+    if(L>160) rgb=aiMix(rgb,[255,239,204],.12+shine*.10);
+    else if(L<70) rgb=aiMix(rgb,darkMaster?[44,24,13]:[28,26,24],.22);
+    else rgb=aiSat(rgb, looseMaster?1.16:1.04);
+
+    // ridge shadow under the paint body
+    aiStroke(cx,x+1.2,y+1.5,ang,len,wid*1.24,aiMix(rgb,[8,7,6],.48),.05+depth*.075,'round');
+    // actual wet body
+    aiStroke(cx,x,y,ang,len,wid,rgb,.10+depth*.16,'round');
+    // top glint on raised paint - only on edges/lights so it feels wet.
+    if((L>125 || edge>34) && rnd()<(.30+shine*.42)){
+      aiStroke(cx,x-1.0,y-1.0,ang,len*.42,Math.max(1,wid*.34),aiMix(rgb,[255,248,225],.40),.055+shine*.11,'round');
+    }
+  }
+
+  // 4. Palette-knife planar shifts. These create clear places where the paint changes.
+  //    They are strongest in clothing/background and quieter on the face.
+  const planes=Math.floor(120 + 210*depth);
+  for(let n=0;n<planes;n++){
+    const x=rnd()*w, y=rnd()*h;
+    const face=(Math.abs(x/w-.5)<.23 && y/h>.18 && y/h<.64);
+    if(face && rnd()<.66) continue;
+    let rgb=aiRgbAt(data,w,h,x,y);
+    const L=aiLum(rgb);
+    if(L>150) rgb=aiMix(rgb,[255,238,196],.18);
+    if(L<72) rgb=aiMix(rgb,[30,22,18],.32);
+    const len=short*(.018+rnd()*.090), wid=short*(.006+rnd()*.025);
+    aiPaletteKnife(cx,x,y,(rnd()*Math.PI)-Math.PI/2,len,wid,rgb,.035+depth*.075);
+  }
+
+  // 5. Wet specular accents: tiny thick flecks like raised oil catches light.
+  cx.save(); cx.globalCompositeOperation='screen';
+  const specs=Math.floor(90*shine + 40*depth);
+  for(let n=0;n<specs;n++){
+    const x=rnd()*w, y=rnd()*h, L=aiLumAt(data,w,h,x,y);
+    if(L<118 && rnd()<.78) continue;
+    const rgb=aiMix(aiRgbAt(data,w,h,x,y), [255,250,230], .58);
+    aiStroke(cx,x,y,rnd()*Math.PI,short*(.003+rnd()*.017),Math.max(1.0,short*(.0012+rnd()*.0028)),rgb,.06+shine*.16,'round');
+  }
+  cx.restore();
+
+  // 6. Final wet varnish veil: subtle, not plastic. Helps remove dry grain.
+  cx.save(); cx.globalCompositeOperation='soft-light'; cx.globalAlpha=.10+shine*.08;
+  const grad=cx.createLinearGradient(0,0,w,h);
+  grad.addColorStop(0,'rgba(255,242,210,.38)');
+  grad.addColorStop(.48,'rgba(255,255,255,.03)');
+  grad.addColorStop(1,'rgba(65,38,20,.30)');
+  cx.fillStyle=grad; cx.fillRect(0,0,w,h); cx.restore();
+
+  return cx.getImageData(0,0,w,h);
+}
+
 // ---------------- analysis ----------------
 function analyseAsync(){
   setTimeout(()=>{
     const res=IM.colourStudy(preprocessed(), colourOpts());
     if(MODES[S.mode].tint){ applyTint(res.image, MODES[S.mode].tint); res.clusters.forEach(c=>{ c.rgb=tintRgb(c.rgb,MODES[S.mode].tint); }); }
+    res.clusters = applyPaintRecipeSnap(res.image, res.clusters, S.paintSnap);
+    res.image = paintPlaneAbstraction(res.image, MASTER_PROFILES[S.mode], S.planeStrength);
     applyMasterFinish(res.image, MASTER_PROFILES[S.mode]);
+    res.image = applyPainterlyStrokePlan(res.image, MASTER_PROFILES[S.mode], S.strokePlan, S.colourAccent);
+    res.image = applyWetImpastoOilEngine(res.image, MASTER_PROFILES[S.mode], S.impastoDepth, S.wetShine);
     S.cache['preview:'+cacheSig()]=res.image;
-    S.clusters=res.clusters.map(c=>({...c, recipes:findRecipes(c.rgb,[...S.owned],2)}));
+    S.clusters=res.clusters.map(c=>({...c, recipes:c.recipes?.length?c.recipes:findRecipes(c.rgb,[...S.owned],2)}));
     if(S.module==='preview'||S.module==='palette') render();
     renderPalettePanel();
     setStatus(`${S.clusters.length} colour families · ${MODES[S.mode].label}`);
@@ -125,7 +373,45 @@ function applyTint(img,[a,b]){ const d=img.data;
     const rgb=IM.labToRgb([L/255*100, a, b]); d[i]=rgb[0]; d[i+1]=rgb[1]; d[i+2]=rgb[2]; } }
 function tintRgb(rgb,[a,b]){ const L=rgbToLab(rgb)[0]; return IM.labToRgb([L,a,b]); }
 
-function cacheSig(){ return [S.mode,S.colourK,S.saturation,S.tempBias,S.painterliness].join('|'); }
+
+function blendRgb(a,b,t){ return [
+  Math.round(a[0]*(1-t)+b[0]*t),
+  Math.round(a[1]*(1-t)+b[1]*t),
+  Math.round(a[2]*(1-t)+b[2]*t)
+]; }
+function dist2(a,b){ const r=a[0]-b[0],g=a[1]-b[1],bb=a[2]-b[2]; return r*r+g*g+bb*bb; }
+
+// Converts digital colour families into physically paintable oil mixtures.
+// This is the core difference from a normal posterize/filter app: colours are
+// pulled toward real pigment recipes, so the study starts to look like paint.
+function applyPaintRecipeSnap(img, clusters, strength){
+  if(!strength || !clusters?.length) return clusters || [];
+  const owned=[...S.owned];
+  const families=clusters.map(c=>{
+    const recs=findRecipes(c.rgb, owned, 3);
+    const best=recs?.[0];
+    const paintRgb=best?.rgb || c.rgb;
+    const snapped=blendRgb(c.rgb, paintRgb, strength);
+    return {...c, originalRgb:c.rgb, rgb:snapped, paintRgb:snapped, recipes:recs};
+  });
+  const d=img.data;
+  for(let i=0;i<d.length;i+=4){
+    const px=[d[i],d[i+1],d[i+2]];
+    let best=families[0], bd=Infinity;
+    for(const f of families){ const dd=dist2(px, f.originalRgb || f.rgb); if(dd<bd){ bd=dd; best=f; } }
+    const L=0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2];
+    // Stronger in mid/lights where opaque oil colour reads as tube paint;
+    // weaker in deepest shadows to preserve glazing.
+    const lightWeight=Math.max(.35, Math.min(1, (L-18)/145));
+    const t=strength*(.45+.55*lightWeight);
+    d[i]=Math.round(d[i]*(1-t)+best.paintRgb[0]*t);
+    d[i+1]=Math.round(d[i+1]*(1-t)+best.paintRgb[1]*t);
+    d[i+2]=Math.round(d[i+2]*(1-t)+best.paintRgb[2]*t);
+  }
+  return families;
+}
+
+function cacheSig(){ return [S.mode,S.colourK,S.saturation,S.tempBias,S.painterliness,S.planeStrength,S.paintSnap,S.strokePlan,S.colourAccent,S.impastoDepth,S.wetShine,S.strokePlan,S.colourAccent].join('|'); }
 
 function moduleImage(){
   const m=S.module, src=preprocessed();
@@ -135,11 +421,13 @@ function moduleImage(){
     value:    `value:${S.mode}|${S.valueSteps}|${S.softness}`,
     notan:    `notan:${S.mode}`,
     light:    `light:${S.mode}`,
+    planes:   `planes:${S.mode}|${S.planeStrength}`,
     temp:     'temp', sat:'sat',
     edges:    `edges:${S.mode}`,
     drawing:  `drawing:${S.mode}|${S.drawingMode}`,
     brush:    'brush-src',
     palette:  'preview:'+cacheSig(),
+    colourstudy: 'preview:'+cacheSig(),
   }[m];
   if(S.cache[sig]) return S.cache[sig];
   let out;
@@ -148,15 +436,20 @@ function moduleImage(){
     case 'value':    out=IM.valueStudy(src,S.valueSteps,S.softness); break;
     case 'notan':    out=IM.notan(src); break;
     case 'light':    out=IM.lightMap(src); break;
+    case 'planes':   out=paintPlaneMap(src, MASTER_PROFILES[S.mode]); break;
     case 'temp':     out=IM.temperatureMap(S.source); break;
     case 'sat':      out=IM.saturationMap(S.source); break;
     case 'edges':    out=IM.edgeHierarchy(src); break;
     case 'drawing':  out=IM.drawingGuide(src,S.drawingMode); break;
     case 'brush':    out=IM.valueStudy(src,0); break;
-    case 'preview': case 'palette': {
+    case 'preview': case 'palette': case 'colourstudy': {
       const r=IM.colourStudy(src,colourOpts());
       if(MODES[S.mode].tint) applyTint(r.image,MODES[S.mode].tint);
+      applyPaintRecipeSnap(r.image, r.clusters, S.paintSnap);
+      r.image = paintPlaneAbstraction(r.image, MASTER_PROFILES[S.mode], S.planeStrength);
       applyMasterFinish(r.image, MASTER_PROFILES[S.mode]);
+      r.image = applyPainterlyStrokePlan(r.image, MASTER_PROFILES[S.mode], S.strokePlan, S.colourAccent);
+      r.image = applyWetImpastoOilEngine(r.image, MASTER_PROFILES[S.mode], S.impastoDepth, S.wetShine);
       out=r.image; break; }
     default: out=S.source;
   }
@@ -184,6 +477,9 @@ function render(){
 function drawOverlays(){
   const w=overlayCanvas.width,h=overlayCanvas.height;
   octx.clearRect(0,0,w,h);
+  if(S.module==='colourstudy' && S.clusters.length){
+    drawColourStudyOverlay(w,h);
+  }
   // brush direction strokes
   if(S.module==='brush' && S.source){
     const strokes=IM.brushDirection(preprocessed());
@@ -212,6 +508,36 @@ function drawOverlays(){
       if(i%2===0){ x+= (i%4<2? r:0); cw-=r; } else { y+= (i%4===1? r:0); chh-=r; }
     }
   }
+}
+
+
+
+function drawColourStudyOverlay(w,h){
+  const families=S.clusters.slice(0,10);
+  const pad=Math.max(18, w*.025);
+  const chip=Math.max(28, Math.min(54, w*.045));
+  const gap=Math.max(8, chip*.22);
+  const total=families.length*chip+(families.length-1)*gap;
+  let x=(w-total)/2, y=h-pad-chip;
+  octx.save();
+  octx.fillStyle='rgba(12,10,8,.42)';
+  roundRect(octx,x-pad*.45,y-pad*.35,total+pad*.9,chip+pad*.7,10); octx.fill();
+  families.forEach((f,i)=>{
+    const [r,g,b]=f.rgb;
+    octx.fillStyle=`rgb(${r},${g},${b})`; roundRect(octx,x,y,chip,chip,6); octx.fill();
+    octx.strokeStyle='rgba(255,255,255,.28)'; octx.lineWidth=1.3; roundRect(octx,x,y,chip,chip,6); octx.stroke();
+    // sample dots placed through the composition: these read like real colour-study selections.
+    const px=w*(0.18+0.64*((i*37)%100)/100);
+    const py=h*(0.16+0.58*((i*61)%100)/100);
+    octx.beginPath(); octx.arc(px,py,Math.max(8,chip*.22),0,Math.PI*2);
+    octx.fillStyle=`rgb(${r},${g},${b})`; octx.fill();
+    octx.strokeStyle='rgba(246,240,225,.72)'; octx.lineWidth=Math.max(1.2,w/900); octx.stroke();
+    x+=chip+gap;
+  });
+  octx.restore();
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
 
 // ---------------- viewport interaction ----------------
@@ -433,12 +759,24 @@ function buildInspector(){
         slider('Transition softness',0,1,0.05,S.softness,v=>{S.softness=v;invalidate('value:');render();},v=>v.toFixed(2)),
         histogramCtl());
   }
-  if(S.module==='preview'||S.module==='palette'){
+  if(S.module==='preview'||S.module==='palette'||S.module==='colourstudy'){
     add(masterProfileCard(),
         slider('Colour complexity',4,20,1,S.colourK,v=>{S.colourK=v;invalidate('preview:');render();analyseAsync();}),
+        slider('Paint colour snap',0,1,0.05,S.paintSnap,v=>{S.paintSnap=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
         slider('Saturation',0,1.6,0.05,S.saturation,v=>{S.saturation=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
         slider('Temperature',-0.6,0.6,0.05,S.tempBias,v=>{S.tempBias=v;invalidate('preview:');render();analyseAsync();},v=>v>0?'+'+v.toFixed(2):v.toFixed(2)),
-        slider('Painterliness',0,1,0.05,S.painterliness,v=>{S.painterliness=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)));
+        slider('Brush stroke plan',0,1,0.05,S.strokePlan,v=>{S.strokePlan=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
+        slider('Colour accents',0,1,0.05,S.colourAccent,v=>{S.colourAccent=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
+        slider('Oil body / wetness',0,1,0.05,S.painterliness,v=>{S.painterliness=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
+        slider('Impasto thickness',0,1,0.05,S.impastoDepth,v=>{S.impastoDepth=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
+        slider('Wet paint shine',0,1,0.05,S.wetShine,v=>{S.wetShine=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
+        slider('Plane abstraction',0,1,0.05,S.planeStrength,v=>{S.planeStrength=v;invalidate('preview:');invalidate('planes:');render();analyseAsync();},v=>v.toFixed(2)));
+  }
+  if(S.module==='planes'){
+    const n=paintPlaneNotes(MASTER_PROFILES[S.mode]);
+    const card=el('div','plane-card',`<div class="master-kicker">Plane Engine</div><h3>${n.title}</h3><p>${n.body}</p><ol>${n.steps.map(s=>`<li>${s}</li>`).join('')}</ol>`);
+    add(card,
+        slider('Plane abstraction',0,1,0.05,S.planeStrength,v=>{S.planeStrength=v;invalidate('preview:');invalidate('planes:');render();analyseAsync();},v=>v.toFixed(2)));
   }
   if(S.module==='drawing'){
     add(seg('Guide type',[['construction','Construction'],['contour','Contour'],['gesture','Gesture'],['shadowshapes','Shadow shapes']],
@@ -447,6 +785,11 @@ function buildInspector(){
   if(['drawing','original','preview','value'].includes(S.module)){
     add(seg('Overlay',[['none','None'],['grid','Grid'],['thirds','Thirds'],['golden','Golden']],S.overlay,v=>{S.overlay=v;render();}));
     if(S.overlay==='grid') add(slider('Grid divisions',2,10,1,S.gridN,v=>{S.gridN=v;render();}));
+  }
+  if(S.module==='colourstudy'){
+    add(el('div','ctl-note','Colour Study turns the image into clean, paintable colour notes. The bottom chips are real pigment-mixture families, not digital colour names.'));
+    add(el('div','ctl-note','Wet paint preview uses raised brush bodies, palette-knife planes and glossy impasto accents so the exported reference reads like real oil paint, not dry posterisation.'));
+    const fam=el('div'); fam.id='families'; add(el('label','ctl-label','Paint colour families'),fam);
   }
   if(S.module==='palette'){
     add(el('div','ctl-note','Piles are sized by coverage and ordered light → dark — the efficient mixing order. Click a pile for its recipe.'));
@@ -471,7 +814,7 @@ function buildInspector(){
     grid.append(b);
   });
   add(grid);
-  if(S.clusters.length && S.module==='palette') renderPalettePanel();
+  if(S.clusters.length && (S.module==='palette'||S.module==='colourstudy')) renderPalettePanel();
 }
 
 function histogramCtl(){

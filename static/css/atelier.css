@@ -171,3 +171,30 @@ body.mix-open #mixtoggle{color:#1c1608;background:var(--gold);border-color:var(-
 .master-meta span{color:var(--muted);font-size:11px;line-height:1.35}
 .master-steps{margin:10px 0 0 18px;padding:0;color:var(--muted);font-size:11px;line-height:1.55}
 .master-steps li::marker{color:var(--gold)}
+
+
+/* Paint plane abstraction engine */
+.plane-card{background:linear-gradient(160deg, rgba(132,112,86,.18), rgba(255,255,255,.025));border:1px solid rgba(201,162,39,.22);border-radius:12px;padding:13px;margin:4px 0 16px}
+.plane-card h3{font:600 18px/1.1 var(--display);margin:0 0 8px;color:var(--ink)}
+.plane-card p{color:var(--muted);font-size:12px;line-height:1.45;margin:0 0 10px}
+.plane-card ol{margin:10px 0 0 18px;padding:0;color:var(--muted);font-size:11px;line-height:1.55}
+.plane-card li::marker{color:var(--gold)}
+
+
+/* Patch: stronger upload affordance and reliable centre CTA hit target */
+#empty { cursor: pointer; }
+#empty .btn { pointer-events: auto; user-select: none; }
+#empty:focus-visible { outline: 2px solid var(--gold); outline-offset: -6px; }
+
+
+/* Patch: wet impasto surface controls */
+.ctl-note {
+  border: 1px solid rgba(201,162,39,.18);
+  background: linear-gradient(180deg, rgba(201,162,39,.08), rgba(255,255,255,.025));
+  border-radius: 12px;
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+#stage {
+  image-rendering: auto;
+}
