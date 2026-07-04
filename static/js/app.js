@@ -1,6 +1,7 @@
 // Atelier AI — workspace application.
 import { PIGMENTS, LIMITED_PALETTES, findRecipes, rgbToLab } from './pigments.js';
 import * as IM from './imaging.js';
+import { MASTER_PROFILES, applyMasterFinish, masterNotes } from './master_profiles.js';
 
 // ---------------- state ----------------
 const S = {
@@ -10,7 +11,7 @@ const S = {
   mode: 'academic',
   paletteKey: 'academic',
   owned: new Set(LIMITED_PALETTES.academic.ids),
-  valueSteps: 6, softness: 0,
+  valueSteps: 8, softness: 0.08,
   colourK: 12, saturation: 1, tempBias: 0, painterliness: 0.35,
   drawingMode: 'construction',
   overlay: 'none',       // grid | thirds | golden | none
@@ -23,21 +24,21 @@ const S = {
 };
 
 const MODES = {
-  academic:   { label:'Academic Realism',  k:14, sat:0.95, temp:0,     vs:0, paint:0.3,  gamma:1,    palette:'academic' },
-  renaissance:{ label:'High Renaissance',  k:12, sat:0.85, temp:0.1,   vs:8, paint:0.25, gamma:1.05, palette:'academic' },
-  baroque:    { label:'Baroque',           k:10, sat:0.9,  temp:0.25,  vs:6, paint:0.3,  gamma:1.35, palette:'portrait' },
-  dutch:      { label:'Dutch Golden Age',  k:11, sat:0.8,  temp:0.2,   vs:7, paint:0.3,  gamma:1.25, palette:'portrait' },
-  atelier:    { label:'Classical Atelier', k:12, sat:0.9,  temp:0.05,  vs:9, paint:0.2,  gamma:1,    palette:'academic' },
-  allaprima:  { label:'Alla Prima',        k:12, sat:1.05, temp:0.1,   vs:0, paint:0.7,  gamma:1,    palette:'full' },
-  sargent:    { label:'Sargent',           k:11, sat:1.0,  temp:0.05,  vs:0, paint:0.8,  gamma:1.15, palette:'portrait' },
-  sorolla:    { label:'Sorolla',           k:14, sat:1.2,  temp:0.3,   vs:0, paint:0.7,  gamma:0.95, palette:'landscape' },
-  rembrandt:  { label:'Rembrandt',         k:9,  sat:0.75, temp:0.35,  vs:6, paint:0.4,  gamma:1.45, palette:'portrait' },
-  caravaggio: { label:'Caravaggio',        k:8,  sat:0.8,  temp:0.2,   vs:5, paint:0.3,  gamma:1.7,  palette:'portrait' },
-  bouguereau: { label:'Bouguereau',        k:14, sat:0.85, temp:0.1,   vs:10,paint:0.1,  gamma:1,    palette:'portrait' },
-  velazquez:  { label:'Velázquez',         k:9,  sat:0.7,  temp:0.05,  vs:7, paint:0.5,  gamma:1.3,  palette:'apelles' },
-  grisaille:  { label:'Grisaille',         k:9,  sat:0,    temp:0,     vs:9, paint:0.2,  gamma:1.1,  palette:'academic', tint:[0,0] },
-  verdaccio:  { label:'Verdaccio',         k:9,  sat:0,    temp:0,     vs:9, paint:0.2,  gamma:1.1,  palette:'academic', tint:[-9,9] },
-  zorn:       { label:'Limited · Zorn',    k:9,  sat:0.9,  temp:0.15,  vs:0, paint:0.4,  gamma:1.15, palette:'zorn' },
+  academic:   { label:'Academic Realism',  k:16, sat:0.96, temp:0.00, vs:8,  paint:0.28, gamma:1.02, palette:'academic' },
+  renaissance:{ label:'High Renaissance',  k:13, sat:0.86, temp:0.08, vs:8,  paint:0.18, gamma:1.04, palette:'academic' },
+  baroque:    { label:'Baroque',           k:10, sat:0.90, temp:0.22, vs:6,  paint:0.34, gamma:1.28, palette:'portrait' },
+  dutch:      { label:'Dutch Golden Age',  k:11, sat:0.78, temp:0.18, vs:7,  paint:0.30, gamma:1.20, palette:'portrait' },
+  atelier:    { label:'Classical Atelier', k:13, sat:0.92, temp:0.04, vs:9,  paint:0.22, gamma:1.04, palette:'academic' },
+  allaprima:  { label:'Alla Prima',        k:12, sat:1.07, temp:0.08, vs:6,  paint:0.78, gamma:1.00, palette:'full' },
+  sargent:    { label:'Sargent',           k:10, sat:0.98, temp:0.05, vs:6,  paint:0.86, gamma:1.12, palette:'portrait' },
+  sorolla:    { label:'Sorolla',           k:14, sat:1.18, temp:0.28, vs:7,  paint:0.70, gamma:0.92, palette:'landscape' },
+  rembrandt:  { label:'Rembrandt',         k:8,  sat:0.76, temp:0.28, vs:5,  paint:0.42, gamma:1.38, palette:'portrait' },
+  caravaggio: { label:'Caravaggio',        k:7,  sat:0.72, temp:0.18, vs:4,  paint:0.32, gamma:1.62, palette:'portrait' },
+  bouguereau: { label:'Bouguereau',        k:16, sat:0.84, temp:0.08, vs:10, paint:0.08, gamma:0.98, palette:'portrait' },
+  velazquez:  { label:'Velazquez',         k:9,  sat:0.68, temp:0.04, vs:6,  paint:0.58, gamma:1.22, palette:'apelles' },
+  grisaille:  { label:'Grisaille',         k:10, sat:0.00, temp:0.00, vs:9,  paint:0.16, gamma:1.08, palette:'academic', tint:[0,0] },
+  verdaccio:  { label:'Verdaccio',         k:10, sat:0.20, temp:-0.10,vs:9,  paint:0.14, gamma:1.08, palette:'academic', tint:[-9,9] },
+  zorn:       { label:'Limited - Zorn',    k:9,  sat:0.84, temp:0.12, vs:6,  paint:0.38, gamma:1.12, palette:'zorn' },
 };
 
 const MODULES = [
@@ -111,6 +112,7 @@ function analyseAsync(){
   setTimeout(()=>{
     const res=IM.colourStudy(preprocessed(), colourOpts());
     if(MODES[S.mode].tint){ applyTint(res.image, MODES[S.mode].tint); res.clusters.forEach(c=>{ c.rgb=tintRgb(c.rgb,MODES[S.mode].tint); }); }
+    applyMasterFinish(res.image, MASTER_PROFILES[S.mode]);
     S.cache['preview:'+cacheSig()]=res.image;
     S.clusters=res.clusters.map(c=>({...c, recipes:findRecipes(c.rgb,[...S.owned],2)}));
     if(S.module==='preview'||S.module==='palette') render();
@@ -154,6 +156,7 @@ function moduleImage(){
     case 'preview': case 'palette': {
       const r=IM.colourStudy(src,colourOpts());
       if(MODES[S.mode].tint) applyTint(r.image,MODES[S.mode].tint);
+      applyMasterFinish(r.image, MASTER_PROFILES[S.mode]);
       out=r.image; break; }
     default: out=S.source;
   }
@@ -369,7 +372,10 @@ function buildModeSelect(){
   Object.entries(MODES).forEach(([k,m])=>{ const o=el('option','',m.label); o.value=k; sel.append(o); });
   sel.value=S.mode;
   sel.onchange=()=>{ S.mode=sel.value; S.cache={};
-    setPalette(MODES[S.mode].palette);
+    const m=MODES[S.mode];
+    S.colourK=m.k; S.saturation=1; S.tempBias=0; S.painterliness=Math.min(1, Math.max(0, m.paint));
+    if(m.vs) S.valueSteps=m.vs;
+    setPalette(m.palette);
     render(); analyseAsync(); buildInspector(); };
 }
 
@@ -380,6 +386,24 @@ function setPalette(key){
 function bindTopbar(){
   $('#exportpng').onclick=exportPNG;
   $('#exportpdf').onclick=exportPDF;
+}
+
+
+function masterProfileCard(){
+  const p=masterNotes(S.mode);
+  const card=el('div','master-card');
+  card.append(el('div','master-kicker',p.era || 'Painting profile'));
+  card.append(el('h3','',p.title || MODES[S.mode].label));
+  card.append(el('p','master-summary',p.summary || 'Mode-specific classical painting profile.'));
+  const meta=el('div','master-meta');
+  meta.append(el('div','',`<strong>Values</strong><span>${p.values}</span>`));
+  meta.append(el('div','',`<strong>Edges</strong><span>${p.edges}</span>`));
+  meta.append(el('div','',`<strong>Palette</strong><span>${p.palette}</span>`));
+  card.append(meta);
+  const steps=el('ol','master-steps');
+  (p.steps || []).forEach(s=>steps.append(el('li','',s)));
+  card.append(steps);
+  return card;
 }
 
 function buildInspector(){
@@ -410,7 +434,8 @@ function buildInspector(){
         histogramCtl());
   }
   if(S.module==='preview'||S.module==='palette'){
-    add(slider('Colour complexity',4,20,1,S.colourK,v=>{S.colourK=v;invalidate('preview:');render();analyseAsync();}),
+    add(masterProfileCard(),
+        slider('Colour complexity',4,20,1,S.colourK,v=>{S.colourK=v;invalidate('preview:');render();analyseAsync();}),
         slider('Saturation',0,1.6,0.05,S.saturation,v=>{S.saturation=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)),
         slider('Temperature',-0.6,0.6,0.05,S.tempBias,v=>{S.tempBias=v;invalidate('preview:');render();analyseAsync();},v=>v>0?'+'+v.toFixed(2):v.toFixed(2)),
         slider('Painterliness',0,1,0.05,S.painterliness,v=>{S.painterliness=v;invalidate('preview:');render();analyseAsync();},v=>v.toFixed(2)));

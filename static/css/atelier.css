@@ -160,3 +160,14 @@ body.mix-open #mixtoggle{color:#1c1608;background:var(--gold);border-color:var(-
   .rail-group{font-size:0}
 }
 @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+
+/* Master painting profiles */
+.master-card{background:linear-gradient(160deg, rgba(201,162,39,.10), rgba(255,255,255,.025));border:1px solid rgba(201,162,39,.28);border-radius:12px;padding:13px;margin:4px 0 16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.master-kicker{font:600 10px var(--body);letter-spacing:.16em;text-transform:uppercase;color:var(--gold);margin-bottom:7px}
+.master-card h3{font:600 20px/1.05 var(--display);margin:0 0 8px;color:var(--ink)}
+.master-summary{color:var(--muted);font-size:12px;line-height:1.45;margin:0 0 11px}
+.master-meta{display:grid;gap:8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:10px 0}
+.master-meta strong{display:block;color:var(--ink);font-size:11px;margin-bottom:2px}
+.master-meta span{color:var(--muted);font-size:11px;line-height:1.35}
+.master-steps{margin:10px 0 0 18px;padding:0;color:var(--muted);font-size:11px;line-height:1.55}
+.master-steps li::marker{color:var(--gold)}
