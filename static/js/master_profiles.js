@@ -20,8 +20,134 @@ export const MASTER_PROFILES = {
   zorn: { title:'Zorn Limited Palette', era:'four-colour discipline', summary:'White, yellow ochre, red and black force disciplined temperature and value control.', values:'5-7 value families; colour variety comes from temperature, not tube count.', edges:'Bold economical edges and simple masses.', palette:'Titanium White, Yellow Ochre, Cadmium Red Light, Ivory Black.', steps:['Mix full value string first','Paint shadows thin','Control orange/grey temperature','Reserve clean white mixes','Use black as cool blue substitute'], ground:[54,43,32], groundBlend:.18, contrast:1.10, chroma:.72, shadowWarm:.02, lightWarm:.04, valueClamp:[4,97], texture:.24 }
 };
 
+
 function clamp(v,min=0,max=255){ return Math.max(min, Math.min(max, v)); }
 function noise(x,y){ const n=Math.sin(x*12.9898 + y*78.233) * 43758.5453; return n - Math.floor(n); }
+function lum(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
+function idx(x,y,w){ return (y*w+x)*4; }
+function sample(buf,w,h,x,y,c){ x=clamp(x|0,0,w-1); y=clamp(y|0,0,h-1); return buf[idx(x,y,w)+c]; }
+function profileOilRules(profile){
+  const title=(profile?.title||'').toLowerCase();
+  const era=(profile?.era||'').toLowerCase();
+  const key=title+' '+era;
+  const rules={
+    stroke: 6,
+    smear: .22,
+    edgeKeep: .55,
+    edgeLoss: .32,
+    canvas: .14,
+    impasto: .24,
+    glaze: .18,
+    scumble: .12,
+    directionBias: 0,
+    shadowMerge: .24,
+    fleshPlane: .16,
+    finalAccent: .18,
+  };
+  if(key.includes('caravaggio')) Object.assign(rules,{stroke:9,smear:.34,edgeKeep:.84,edgeLoss:.72,canvas:.10,impasto:.28,glaze:.42,shadowMerge:.78,finalAccent:.36,directionBias:.15});
+  else if(key.includes('rembrandt')) Object.assign(rules,{stroke:7,smear:.28,edgeKeep:.62,edgeLoss:.68,canvas:.20,impasto:.42,glaze:.58,shadowMerge:.70,scumble:.20,finalAccent:.34,directionBias:.10});
+  else if(key.includes('sargent')) Object.assign(rules,{stroke:13,smear:.48,edgeKeep:.72,edgeLoss:.42,canvas:.18,impasto:.38,glaze:.10,scumble:.24,finalAccent:.28,directionBias:.35});
+  else if(key.includes('sorolla')) Object.assign(rules,{stroke:11,smear:.42,edgeKeep:.52,edgeLoss:.28,canvas:.18,impasto:.34,glaze:.06,scumble:.34,finalAccent:.30,directionBias:.45});
+  else if(key.includes('bouguereau')) Object.assign(rules,{stroke:3,smear:.10,edgeKeep:.44,edgeLoss:.18,canvas:.05,impasto:.08,glaze:.28,scumble:.05,finalAccent:.10,directionBias:.02});
+  else if(key.includes('velazquez')) Object.assign(rules,{stroke:12,smear:.44,edgeKeep:.58,edgeLoss:.38,canvas:.16,impasto:.24,glaze:.18,scumble:.28,finalAccent:.24,directionBias:.30});
+  else if(key.includes('alla')) Object.assign(rules,{stroke:12,smear:.44,edgeKeep:.56,edgeLoss:.30,canvas:.20,impasto:.36,glaze:.05,scumble:.26,finalAccent:.26,directionBias:.28});
+  else if(key.includes('renaissance')) Object.assign(rules,{stroke:4,smear:.14,edgeKeep:.36,edgeLoss:.30,canvas:.06,impasto:.08,glaze:.36,scumble:.06,finalAccent:.10,directionBias:.04});
+  else if(key.includes('grisaille')||key.includes('verdaccio')) Object.assign(rules,{stroke:5,smear:.18,edgeKeep:.48,edgeLoss:.28,canvas:.10,impasto:.10,glaze:.22,scumble:.08,finalAccent:.12});
+  return rules;
+}
+
+function painterlyStrokePass(img, rules){
+  const w=img.width,h=img.height,d=img.data;
+  const src=new Uint8ClampedArray(d);
+  const out=new Uint8ClampedArray(d);
+  const maxR=Math.max(1, Math.round(rules.stroke));
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const p=idx(x,y,w);
+      const L=lum(src[p],src[p+1],src[p+2]);
+      const Lx=lum(sample(src,w,h,x+1,y,0),sample(src,w,h,x+1,y,1),sample(src,w,h,x+1,y,2))-lum(sample(src,w,h,x-1,y,0),sample(src,w,h,x-1,y,1),sample(src,w,h,x-1,y,2));
+      const Ly=lum(sample(src,w,h,x,y+1,0),sample(src,w,h,x,y+1,1),sample(src,w,h,x,y+1,2))-lum(sample(src,w,h,x,y-1,0),sample(src,w,h,x,y-1,1),sample(src,w,h,x,y-1,2));
+      const edge=Math.min(1, Math.sqrt(Lx*Lx+Ly*Ly)/70);
+      const shadow=Math.max(0,(58-L)/58);
+      const light=Math.max(0,(L-55)/45);
+      const radius=Math.max(1, Math.round(maxR*(1-edge*rules.edgeKeep)*(0.55+rules.edgeLoss*shadow)));
+      let angle=Math.atan2(Ly,Lx)+Math.PI/2 + rules.directionBias;
+      if(light>.55) angle += 0.25*Math.sin(y*.04);
+      const ca=Math.cos(angle), sa=Math.sin(angle);
+      let r=0,g=0,b=0,total=0;
+      for(let t=-radius;t<=radius;t++){
+        const wt=1-Math.abs(t)/(radius+1);
+        const xx=x+ca*t, yy=y+sa*t;
+        r += sample(src,w,h,xx,yy,0)*wt;
+        g += sample(src,w,h,xx,yy,1)*wt;
+        b += sample(src,w,h,xx,yy,2)*wt;
+        total += wt;
+      }
+      const mix=rules.smear*(1-edge*0.75);
+      out[p]=clamp(src[p]*(1-mix)+(r/total)*mix);
+      out[p+1]=clamp(src[p+1]*(1-mix)+(g/total)*mix);
+      out[p+2]=clamp(src[p+2]*(1-mix)+(b/total)*mix);
+      out[p+3]=255;
+    }
+  }
+  d.set(out);
+}
+
+function oilSurfacePass(img, rules){
+  const w=img.width,h=img.height,d=img.data;
+  const src=new Uint8ClampedArray(d);
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const p=idx(x,y,w);
+      let r=src[p],g=src[p+1],b=src[p+2];
+      const L=lum(r,g,b);
+      const shadow=Math.max(0,(52-L)/52);
+      const light=Math.max(0,(L-62)/38);
+      const weave=(Math.sin(x*0.85)+Math.sin(y*0.92))*0.5 + (noise(x>>1,y>>1)-.5);
+      const longStroke=(noise((x/13)|0,(y/5)|0)-.5) + Math.sin((x+y*.22)*0.11)*0.35;
+      const canvasMark=weave*rules.canvas*10;
+      const body=longStroke*(rules.scumble*12 + rules.impasto*16*light);
+      const glaze=-rules.glaze*shadow*12;
+      r += canvasMark + body + glaze;
+      g += canvasMark + body + glaze;
+      b += canvasMark + body + glaze;
+      // Warm translucent shadow glaze, cool broken-light scumble.
+      r += rules.glaze*shadow*10;
+      g += rules.glaze*shadow*3;
+      b -= rules.glaze*shadow*5;
+      b += rules.scumble*light*5;
+      // Final paint ridges catch light only on already-light passages.
+      if(light>.35 && noise((x/3)|0,(y/3)|0)>.72){
+        const hit=rules.finalAccent*18*light;
+        r+=hit; g+=hit*.92; b+=hit*.78;
+      }
+      d[p]=clamp(Math.round(r)); d[p+1]=clamp(Math.round(g)); d[p+2]=clamp(Math.round(b));
+    }
+  }
+}
+
+function shadowMassPass(img, rules){
+  const w=img.width,h=img.height,d=img.data;
+  const src=new Uint8ClampedArray(d);
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const p=idx(x,y,w);
+      const L=lum(src[p],src[p+1],src[p+2]);
+      const shadow=Math.max(0,(55-L)/55);
+      if(shadow<=0) continue;
+      let r=0,g=0,b=0,n=0;
+      const rad=1+Math.round(rules.shadowMerge*3);
+      for(let yy=-rad;yy<=rad;yy++) for(let xx=-rad;xx<=rad;xx++){
+        const q=idx(clamp(x+xx,0,w-1),clamp(y+yy,0,h-1),w);
+        r+=src[q]; g+=src[q+1]; b+=src[q+2]; n++;
+      }
+      const m=rules.shadowMerge*shadow*.34;
+      d[p]=clamp(src[p]*(1-m)+(r/n)*m);
+      d[p+1]=clamp(src[p+1]*(1-m)+(g/n)*m);
+      d[p+2]=clamp(src[p+2]*(1-m)+(b/n)*m);
+    }
+  }
+}
 
 export function applyMasterFinish(img, profile){
   if(!profile) return img;
@@ -33,7 +159,9 @@ export function applyMasterFinish(img, profile){
   const contrast = profile.contrast ?? 1;
   const texture = profile.texture || 0;
   const sfumato = profile.sfumato || 0;
+  const rules = profileOilRules(profile);
 
+  // Pigment-and-ground pass: move photographic colour into paintable earth/light families.
   for(let i=0,p=0;i<d.length;i+=4,p++){
     const x = p % w, y = (p / w) | 0;
     let lab = rgbToLab([d[i],d[i+1],d[i+2]]);
@@ -53,18 +181,22 @@ export function applyMasterFinish(img, profile){
     g = g*(1-gb) + ground[1]*gb;
     b = b*(1-gb) + ground[2]*gb;
     if(texture){
-      const n = (noise(x,y)-0.5) * texture * 18;
-      const long = (noise((x/7)|0, (y/3)|0)-0.5) * texture * 10;
-      r += n + long; g += n + long; b += n + long;
+      const n = (noise(x,y)-0.5) * texture * 12;
+      r += n; g += n; b += n;
     }
     if(sfumato){
       const mid = 128;
-      r = r*(1-sfumato*0.18) + mid*(sfumato*0.18);
-      g = g*(1-sfumato*0.18) + mid*(sfumato*0.18);
-      b = b*(1-sfumato*0.18) + mid*(sfumato*0.18);
+      r = r*(1-sfumato*0.14) + mid*(sfumato*0.14);
+      g = g*(1-sfumato*0.14) + mid*(sfumato*0.14);
+      b = b*(1-sfumato*0.14) + mid*(sfumato*0.14);
     }
     d[i]=clamp(Math.round(r)); d[i+1]=clamp(Math.round(g)); d[i+2]=clamp(Math.round(b));
   }
+
+  // Master-painter rule engine: lost shadows, directional strokes, canvas tooth, impasto/scumble.
+  shadowMassPass(img, rules);
+  painterlyStrokePass(img, rules);
+  oilSurfacePass(img, rules);
   return img;
 }
 
